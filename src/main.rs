@@ -1,5 +1,8 @@
 use clap::Parser;
+use redis::AsyncCommands;
+use tokio::sync::mpsc;
 
+use crate::aggregator::{Aggregator, Message};
 mod aggregator;
 
 #[derive(Parser, Debug)]
@@ -15,13 +18,30 @@ struct Args {
     output: String,
 }
 
+async fn run_aggregator(
+    mut rx: tokio::sync::mpsc::Receiver<Message>,
+    redis_url: String,
+    output_channel: String,
+) {
+    let client = redis::Client::open(redis_url).unwrap();
+    let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+
+    let mut aggregator = Aggregator::default();
+
+    while let Some(msg) = rx.recv().await {
+        let aggregates_msg = aggregator.process(msg);
+        let payload = serde_json::to_string(&aggregates_msg).unwrap();
+
+        let _: redis::RedisResult<()> = conn.publish(&output_channel, payload).await;
+    }
+}
+
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
 
-    let client = redis::Client::open(args.redis_url.clone()).unwrap();
-    let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+    let (_, rx) = mpsc::channel(32);
 
-    let pong: String = redis::cmd("PING").query_async(&mut conn).await.unwrap();
-    println!("{pong}");
+    let aggregator_handle = tokio::spawn(run_aggregator(rx, args.redis_url, args.output));
+    aggregator_handle.await.unwrap();
 }
