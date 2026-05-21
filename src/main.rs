@@ -25,18 +25,19 @@ async fn run_aggregator(
     mut rx: tokio::sync::mpsc::Receiver<Message>,
     redis_url: String,
     output_channel: String,
-) {
-    let client = redis::Client::open(redis_url).unwrap();
-    let mut conn = client.get_multiplexed_async_connection().await.unwrap();
+) -> Result<(), AppError> {
+    let client = redis::Client::open(redis_url)?;
+    let mut conn = client.get_multiplexed_async_connection().await?;
 
     let mut aggregator = Aggregator::default();
 
     while let Some(msg) = rx.recv().await {
         let aggregates_msg = aggregator.process(msg);
-        let payload = serde_json::to_string(&aggregates_msg).unwrap();
+        let payload = serde_json::to_string(&aggregates_msg)?;
 
         let _: redis::RedisResult<()> = conn.publish(&output_channel, payload).await;
     }
+    Ok(())
 }
 
 #[tokio::main]
