@@ -1,4 +1,7 @@
-use crate::aggregator::{Aggregator, Message};
+use crate::{
+    aggregator::{Aggregator, Message},
+    error::AppError,
+};
 use clap::Parser;
 use redis::AsyncCommands;
 use tokio::sync::mpsc;
@@ -37,11 +40,13 @@ async fn run_aggregator(
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), AppError> {
     let args = Args::parse();
 
     let (_, rx) = mpsc::channel(32);
 
     let aggregator_handle = tokio::spawn(run_aggregator(rx, args.redis_url, args.output));
-    aggregator_handle.await.unwrap();
+    aggregator_handle.await?;
+
+    Ok(())
 }
