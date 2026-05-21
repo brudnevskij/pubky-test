@@ -1,9 +1,9 @@
+use crate::aggregator::{Aggregator, Message};
 use clap::Parser;
 use redis::AsyncCommands;
 use tokio::sync::mpsc;
-
-use crate::aggregator::{Aggregator, Message};
 mod aggregator;
+mod error;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
