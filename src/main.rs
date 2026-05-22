@@ -1,11 +1,12 @@
 use crate::{
     aggregator::{Aggregator, Message},
-    error::AppError,
+    error::AppResult,
 };
 use clap::Parser;
 use redis::AsyncCommands;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
 mod aggregator;
 mod error;
 
@@ -26,7 +27,8 @@ async fn run_subs(
     tx: tokio::sync::mpsc::Sender<Message>,
     redis_url: String,
     input_channels: Vec<String>,
-) -> Result<(), AppError> {
+    cancel_tkn: CancellationToken,
+) -> AppResult<()> {
     let client = redis::Client::open(redis_url)?;
     let mut pubsub = client.get_async_pubsub().await?;
 
@@ -36,27 +38,37 @@ async fn run_subs(
 
     let mut stream = pubsub.on_message();
 
-    while let Some(redis_msg) = stream.next().await {
-        let payload: String = match redis_msg.get_payload() {
-            Ok(payload) => payload,
-            Err(_) => {
-                // failed to parse
-                // TODO: log err
-                continue;
+    loop {
+        tokio::select! {
+            _ = cancel_tkn.cancelled() => {
+                // shutdown requested
+               break;
             }
-        };
 
-        let msg: Message = match serde_json::from_str(&payload) {
-            Ok(msg) => msg,
-            Err(_) => {
-                // TODO: log
-                continue;
+            msg_redis = stream.next() =>{
+                let Some(msg) = msg_redis else {
+                    // redis stream closed
+                    break;
+                };
+
+                let payload: String = match msg.get_payload(){
+                    Ok(payload)=> payload,
+                    Err(_) => {
+                        //todo: log
+                        continue;
+                    }
+                };
+
+                let msg: Message = match serde_json::from_str(&payload){
+                    Ok(msg) => msg,
+                    Err(_) => continue,
+                };
+
+                if tx.send(msg).await.is_err(){
+                    // closed
+                    break;
+                }
             }
-        };
-
-        if tx.send(msg).await.is_err() {
-            // channel closed
-            break;
         }
     }
 
@@ -67,32 +79,62 @@ async fn run_aggregator(
     mut rx: tokio::sync::mpsc::Receiver<Message>,
     redis_url: String,
     output_channel: String,
-) -> Result<(), AppError> {
+    cancel_tkn: CancellationToken,
+) -> AppResult<()> {
     let client = redis::Client::open(redis_url)?;
     let mut conn = client.get_multiplexed_async_connection().await?;
 
     let mut aggregator = Aggregator::default();
+    loop {
+        tokio::select! {
+            _ = cancel_tkn.cancelled() =>{
+                break;
+            }
+            msg = rx.recv() => {
+                let Some(msg) = msg else {
+                    break;
+                };
 
-    while let Some(msg) = rx.recv().await {
-        let aggregates_msg = aggregator.process(msg);
-        let payload = serde_json::to_string(&aggregates_msg)?;
-
-        let _: redis::RedisResult<()> = conn.publish(&output_channel, payload).await;
+                let aggregated_msg = aggregator.process(msg);
+                let payload = serde_json::to_string(&aggregated_msg)?;
+                match conn.publish::<_,_,usize>(&output_channel, payload).await {
+                    Ok(_) => (),
+                    Err(_) => {
+                        // log error
+                        continue;
+                    },
+                };
+            }
+        }
     }
     Ok(())
 }
 
 #[tokio::main]
-async fn main() -> Result<(), AppError> {
+async fn main() -> AppResult<()> {
     let args = Args::parse();
 
     let (tx, rx) = mpsc::channel(32);
+    let cancel_tkn = CancellationToken::new();
 
-    let subs_handler = tokio::spawn(run_subs(tx, args.redis_url.clone(), args.inputs));
-    let aggregator_handle = tokio::spawn(run_aggregator(rx, args.redis_url, args.output));
+    let subs_handler = tokio::spawn(run_subs(
+        tx,
+        args.redis_url.clone(),
+        args.inputs,
+        cancel_tkn.clone(),
+    ));
+    let aggregator_handle = tokio::spawn(run_aggregator(
+        rx,
+        args.redis_url,
+        args.output,
+        cancel_tkn.clone(),
+    ));
 
-    let _ = subs_handler.await?;
-    let _ = aggregator_handle.await?;
+    tokio::signal::ctrl_c().await?;
+    cancel_tkn.cancel();
+
+    subs_handler.await??;
+    aggregator_handle.await??;
 
     Ok(())
 }

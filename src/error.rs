@@ -10,4 +10,9 @@ pub enum AppError {
 
     #[error("task join error: {0}")]
     Join(#[from] tokio::task::JoinError),
+
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
 }
+
+pub type AppResult<T> = Result<T, AppError>;
