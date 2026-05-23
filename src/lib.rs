@@ -11,11 +11,10 @@ use tokio_util::sync::CancellationToken;
 
 pub async fn run_subs(
     tx: tokio::sync::mpsc::Sender<Message>,
-    redis_url: String,
+    client: redis::Client,
     input_channels: Vec<String>,
     cancel_tkn: CancellationToken,
 ) -> AppResult<()> {
-    let client = redis::Client::open(redis_url)?;
     let mut pubsub = client.get_async_pubsub().await?;
 
     for channel_name in input_channels {
@@ -63,11 +62,10 @@ pub async fn run_subs(
 
 pub async fn run_aggregator(
     mut rx: tokio::sync::mpsc::Receiver<Message>,
-    redis_url: String,
+    client: redis::Client,
     output_channel: String,
     cancel_tkn: CancellationToken,
 ) -> AppResult<()> {
-    let client = redis::Client::open(redis_url)?;
     let mut conn = client.get_multiplexed_async_connection().await?;
 
     let mut aggregator = Aggregator::default();

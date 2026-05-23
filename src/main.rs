@@ -1,5 +1,6 @@
 use clap::Parser;
 use pubky_test::{error::AppResult, run_aggregator, run_subs};
+use redis::Commands;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -39,18 +40,18 @@ async fn main() -> AppResult<()> {
     let (tx, rx) = mpsc::channel(32);
     let cancel_tkn = CancellationToken::new();
 
+    let mut client = redis::Client::open(args.redis_url.clone())?;
+    let _: String = client.ping()?;
+    tracing::info!("connected to redis");
+
     let subs_handler = tokio::spawn(run_subs(
         tx,
-        args.redis_url.clone(),
+        client.clone(),
         args.inputs,
         cancel_tkn.clone(),
     ));
-    let aggregator_handle = tokio::spawn(run_aggregator(
-        rx,
-        args.redis_url,
-        args.output,
-        cancel_tkn.clone(),
-    ));
+    let aggregator_handle =
+        tokio::spawn(run_aggregator(rx, client, args.output, cancel_tkn.clone()));
 
     tokio::signal::ctrl_c().await?;
     tracing::info!("shutdown signal received");
@@ -58,7 +59,7 @@ async fn main() -> AppResult<()> {
 
     subs_handler.await??;
     aggregator_handle.await??;
-    tracing::info!("shutdo completed");
+    tracing::info!("shutdown completed");
 
     Ok(())
 }
