@@ -16,9 +16,25 @@ struct Args {
     output: String,
 }
 
+fn init_tracing() {
+    tracing_subscriber::fmt()
+        .with_target(true)
+        .with_thread_names(false)
+        .with_thread_ids(false)
+        .init();
+}
+
 #[tokio::main]
 async fn main() -> AppResult<()> {
+    init_tracing();
     let args = Args::parse();
+
+    tracing::info!(
+        redis_url = %args.redis_url,
+        output_channel =%args.output,
+        input_channels = ?args.inputs,
+        "starting redis aggregatror"
+    );
 
     let (tx, rx) = mpsc::channel(32);
     let cancel_tkn = CancellationToken::new();
@@ -37,10 +53,12 @@ async fn main() -> AppResult<()> {
     ));
 
     tokio::signal::ctrl_c().await?;
+    tracing::info!("shutdown signal received");
     cancel_tkn.cancel();
 
     subs_handler.await??;
     aggregator_handle.await??;
+    tracing::info!("shutdo completed");
 
     Ok(())
 }
