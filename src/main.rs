@@ -27,6 +27,7 @@ fn init_tracing() {
 
 #[tokio::main]
 async fn main() -> AppResult<()> {
+    // app init
     init_tracing();
     let args = Args::parse();
 
@@ -40,10 +41,12 @@ async fn main() -> AppResult<()> {
     let (tx, rx) = mpsc::channel(32);
     let cancel_tkn = CancellationToken::new();
 
+    // checking redis connection
     let mut client = redis::Client::open(args.redis_url.clone())?;
     let _: String = client.ping()?;
     tracing::info!("connected to redis");
 
+    // launching main jobs
     let subs_handler = tokio::spawn(run_subs(
         tx,
         client.clone(),
@@ -53,6 +56,7 @@ async fn main() -> AppResult<()> {
     let aggregator_handle =
         tokio::spawn(run_aggregator(rx, client, args.output, cancel_tkn.clone()));
 
+    // shutdown
     tokio::signal::ctrl_c().await?;
     tracing::info!("shutdown signal received");
     cancel_tkn.cancel();

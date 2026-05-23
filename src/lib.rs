@@ -14,6 +14,8 @@ use tokio_util::sync::CancellationToken;
     skip(tx, client, cancel_tkn),
     fields(input_channels = ?input_channels)
 )]
+/// Subscribes to the configured redis channels and forwards decoded messages
+/// to the Aggregator via interanl tokio channel
 pub async fn run_subs(
     tx: tokio::sync::mpsc::Sender<Message>,
     client: redis::Client,
@@ -88,6 +90,8 @@ pub async fn run_subs(
     skip(rx, client, cancel_tkn),
     fields(output_channel = %output_channel)
 )]
+// Receives messages from the sub channel, aggregates them, and
+// sends them to the redis output channel
 pub async fn run_aggregator(
     mut rx: tokio::sync::mpsc::Receiver<Message>,
     client: redis::Client,
