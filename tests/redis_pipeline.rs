@@ -1,5 +1,5 @@
 use pubky_test::{run_aggregator, run_subs};
-use redis::AsyncCommands;
+use redis::{AsyncCommands, Commands};
 use testcontainers::{
     GenericImage,
     core::{IntoContainerPort, WaitFor},
@@ -32,16 +32,19 @@ async fn test_redis() {
     let (tx, rx) = tokio::sync::mpsc::channel(32);
     let cancel_tkn = CancellationToken::new();
 
+    let mut client = redis::Client::open(redis_url.clone()).unwrap();
+    let _: String = client.ping().unwrap();
+
     let subs_handle = tokio::spawn(run_subs(
         tx,
-        redis_url.clone(),
+        client.clone(),
         vec!["inputA".to_string(), "inputB".to_string()],
         cancel_tkn.clone(),
     ));
 
     let aggregator_handle = tokio::spawn(run_aggregator(
         rx,
-        redis_url.clone(),
+        client,
         "outputChannel".to_string(),
         cancel_tkn.clone(),
     ));
